@@ -1,4 +1,3 @@
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
@@ -21,7 +20,7 @@ long long file_size = 0;
 int n_of_thread;
 
 // structures, vars for training
-int *hash;
+int* hash;
 float* nodes;
 int size_of_hash = MAX_VOCAB_SIZE;
 struct WORD* vocab;
@@ -44,16 +43,13 @@ long long total_skip_cnt = 0;
 
 // model var
 int hidden_size;
-float* in_layer;
-
-///////////////////////////////
+float* in_layer; // parameter
 
 void* training_thread(void* id_ptr){
     long long id = (long long)id_ptr;
-
+    
     FILE* infp = fopen(input_file, "r");
     long long* sentence = (long long*)malloc(sizeof(long long)*MAX_SENTENCE_LENGTH);
-    long long context_count;
     long long target, target_pos;
     long long context, context_pos;
     long long sentence_length;
@@ -61,24 +57,25 @@ void* training_thread(void* id_ptr){
     long long random_window;
     unsigned long long next_random = (long long)id;
 
-    long long local_trained_word = 0; 
+    long long local_trained_word = 0;
     long long local_last_trained_word = 0;
+    
     float* layer_grad = (float*)calloc(hidden_size, sizeof(float));
-    float* hidden_values = (float*)calloc(hidden_size, sizeof(float));
-
-    long long word_per_thread = total_words/n_of_thread;
-    long long local_skipped_total=0;
+    
+    long long word_per_thread = total_words / n_of_thread;
+    long long local_skipped_total = 0;
 
     lr = starting_lr;
     for(int ep=0; ep<epoch; ep++){
         clock_t start = time(NULL);
 
-        fseek(infp, file_size / (long long)n_of_thread * (long long)id, SEEK_SET);
+        fseek(infp, (file_size / (long long)n_of_thread) * (long long)id, SEEK_SET);
         local_trained_word = 0;
         local_last_trained_word = 0;
+
         if(id==0) printf("\nRunning epoch %d\n", ep);
         while(1){
-
+            
             sentence_length = readSentenceFromFile(infp, sentence, id, ep+1);
             local_trained_word += skip_cnt[id];
             local_skipped_total += skip_cnt[id];
@@ -87,90 +84,62 @@ void* training_thread(void* id_ptr){
             }
 
             for(target_pos=0; target_pos<sentence_length; target_pos++){
-                // traverse the sentence -> target
-                // 0. Calculate current learning rate
-                
-                if (local_trained_word - local_last_trained_word > 10000){
+                // traverse current sentence -> target
+                // 0. calculate current learning rate
+
+                if(local_trained_word - local_last_trained_word > 10000){
                     trained_word += local_trained_word - local_last_trained_word;
-                    local_last_trained_word = local_trained_word;
-                    lr = starting_lr*(1-trained_word/(float)(epoch*total_words+1));
-                    if(lr < starting_lr*0.0001) lr = starting_lr*0.0001;
+                    lr = starting_lr*(1-(float)trained_word / (float)(epoch*total_words+1));
+                    if(lr<starting_lr*0.0001) lr = starting_lr*0.0001;
                     if(id==0){
                         printf("\rLearning rate: %f, Progress: %.4f, current skipped words: %lld, time: %ld", lr, (float)(local_trained_word)/(float)(total_words/n_of_thread), local_skipped_total, time(NULL)-start);
                         fflush(stdout);
                     }
                 }
-
                 // 1. Set target
                 target = sentence[target_pos];
                 if(target==-1) continue;
 
-                // 2. forward pass in_layer
-                // reset values
-                context_count = 0;
-                for(int a=0; a<hidden_size; a++){
-                    hidden_values[a] = 0.0;
-                    layer_grad[a] = 0.0;
+                // 2. forward pass
+                // reset gradient
+                for (int b=0; b<hidden_size; b++){
+                    layer_grad[b] = 0.0;
                 }
-                next_random = next_random * (unsigned long long)25214903917 + 11;
-                random_window = next_random % window_size;
-                for(context_pos=target_pos-random_window; context_pos<=target_pos+random_window; context_pos++){
-                    if(context_pos < 0) continue;
-                    if(context_pos >= sentence_length) break;
-
+                for(context_pos=target_pos-window_size; context_pos<=target_pos+window_size; context_pos++){
+                    if(context_pos<0) continue;
+                    if(context_pos>=sentence_length) break;
+                    
                     if(context_pos != target_pos){
+                        float g, f;
+
                         context = sentence[context_pos];
-                        if(context == -1) continue;
-                        for(int b=0; b<hidden_size; b++){
-                            hidden_values[b] += in_layer[context*hidden_size + b];
-                        }
-                        context_count++;
-                    }
-                }
+                        if(context==-1) continue;
+                        for(int d=0; d<vocab[context].codelen; d++){
+                            int current_path = vocab[context].point[d];
 
-                if(context_count==0) continue;
-                for(int b=0; b<hidden_size; b++){ // average
-                    hidden_values[b] /= context_count;
-                }
+                            // dot product
+                            f=0;
+                            for(int c=0; c<hidden_size; c++){
+                                f += in_layer[target*hidden_size + c] * nodes[current_path*hidden_size + c];
+                            }
+                            // sigmoid
+                            if(f <= -MAX_EXP || f>=MAX_EXP) continue;
+                            else f = expTable[(int)((f+MAX_EXP)*(EXP_TABLE_SIZE/MAX_EXP/2))];
 
-                // forward pass out_layer
-                // hierarchical softmax
-                float g;
-                for(int d=0; d<vocab[target].codelen; d++){
-                    int current_path = vocab[target].point[d];
+                            // 3. backward pass
+                            g = (1 - vocab[context].code[d] - f);
+                            g *= lr;
 
-                    // dot product
-                    float f = 0;
-                    for(int b=0; b<hidden_size; b++){
-                        f += hidden_values[b] * nodes[current_path*hidden_size + b];
-                    }
-                    //sigmoid
-                    if(f<=-MAX_EXP || f>=MAX_EXP) continue;
-                    else f = expTable[(int)((f+MAX_EXP)*(EXP_TABLE_SIZE/MAX_EXP/2))];
-
-                    // 3. backward pass
-                    g = (1 - vocab[target].code[d] - f);
-                    g *= lr;
-
-                    for(int b=0; b<hidden_size; b++){
-                        // calculate gradient
-                        layer_grad[b] += g * nodes[current_path*hidden_size + b];
-                        // update inner node
-                        nodes[current_path*hidden_size + b] += g*hidden_values[b];
-                    }
-                }
-
-                // 4. update in_layer
-                for(context_pos=target_pos-random_window; context_pos<=target_pos+random_window; context_pos++){
-                    if(context_pos < 0) continue;
-                    if(context_pos >= sentence_length) break;
-
-                    if(context_pos != target_pos){
-                        context = sentence[context_pos];
-                        for(int b=0; b<hidden_size; b++){
-                            in_layer[context*hidden_size + b] += layer_grad[b]; //check dividing with context_count
+                            for(int c=0; c<hidden_size; c++){
+                                // calculating gradient for in_layer and updating inner node
+                                layer_grad[c] += g*nodes[current_path*hidden_size + c];
+                                nodes[current_path*hidden_size + c] += g * in_layer[target*hidden_size + c];
+                            }
                         }
                     }
+                }
+                for (int b=0; b<hidden_size; b++){ // updating in_layer
+                    in_layer[target*hidden_size+b] += layer_grad[b];
                 }
 
                 local_trained_word++;
@@ -189,7 +158,6 @@ void* training_thread(void* id_ptr){
         }
     }
 
-    free(hidden_values);
     free(layer_grad);
     free(sentence);
     fclose(infp);
@@ -199,7 +167,7 @@ void* training_thread(void* id_ptr){
 
 int main(int argc, char** argv){
     if(argc < 8){
-        printf("Usage example: ./cbow hidden_size window_size sampling_param thread_number epoch data_file output_file\n");
+        printf("Usage example: ./skipgram hidden_size window_size sampling_param thread_number epoch data_file output_file\n");
         return -1;
     }
     else{
@@ -211,7 +179,7 @@ int main(int argc, char** argv){
         strcpy(input_file, argv[6]);
         strcpy(output_file, argv[7]);
     }
-    starting_lr = 0.05;
+    starting_lr = 0.025;
     printf("Starting learning rate : %f\n", starting_lr);
     printf("Sampling param: %f\n", sample);
 
@@ -240,7 +208,7 @@ int main(int argc, char** argv){
 
     // initialize inner nodes of binary tree
     printf("n_of_inner_node: %d\n",n_of_inner_node);
-
+    
     nodes = (float*)malloc(sizeof(float)*hidden_size*n_of_inner_node);
     for(int a=0; a<n_of_inner_node; a++){
         for(int b=0; b<hidden_size; b++){
@@ -254,7 +222,7 @@ int main(int argc, char** argv){
     printf("Training...");
     time_t start_time = time(NULL);
     pthread_t* threads = (pthread_t*)malloc(sizeof(pthread_t)*n_of_thread);
-
+    
     int* id = (int*)malloc(sizeof(int)*n_of_thread);
     skip_cnt = (long long*)malloc(sizeof(long long)*n_of_thread);
     for(int a=0; a<n_of_thread; a++){
@@ -267,18 +235,18 @@ int main(int argc, char** argv){
     }
     time_t end_time = time(NULL);
     printf("\nTraining done... took %ld, last learning rate: %f trained_words: %lld skipped_words: %lld\n", end_time-start_time, lr, trained_word, total_skip_cnt);
-
+    
     // save word vectors
     FILE* outfp = fopen(output_file, "wb");
     fprintf(outfp, "%lld %lld\n", (long long)n_of_words, (long long)hidden_size);
     for(int a=0; a<n_of_words; a++){
         fprintf(outfp, "%s ", vocab[a].word);
-
+        
         if(binary) {
             for(int k=0;k<strlen(vocab[a].word);k++){
                 if(!isalpha(vocab[a].word[k])){ printf(" not alphabet!\n");}
             }
-
+            
             for(int b=0; b<hidden_size; b++){
                 fwrite(&in_layer[a*hidden_size + b], sizeof(float), 1, outfp);
             }
@@ -292,12 +260,10 @@ int main(int argc, char** argv){
     }
     fclose(outfp);
     // free everything
-
+    
     free(id);
     free(hash);
     free(vocab);
-    free(skip_cnt);
-    free(threads);
     return 0;
 }
 
@@ -366,8 +332,8 @@ void buildHash(char* file_name){
             }
         }
         else{
-            if(word_length >= MAX_STRING - 1) word_length--;
             cur_word[word_length++] = ch;
+            if(word_length >= MAX_STRING) word_length--;
         }
     }
 
@@ -379,7 +345,7 @@ void buildHash(char* file_name){
 }
 
 void initModel(){
- // initialize model
+
 }
 
 int readSentenceFromFile(FILE* fp, long long* sentence, long long thread_id, int iter){
@@ -464,7 +430,17 @@ int _comp(const void* a, const void* b){
 void buildBinaryTree(){
     printf("building binary tree...\n");
     // 1. Sort vocab by count
+    //printf("Before qsort: \n");
+    //for(int cnt=0; cnt<10; cnt++){
+    //    printf("%d %s\n", vocab[cnt].count, vocab[cnt].word);
+    //}
+    //printf("\n");
     qsort(vocab, n_of_words, sizeof(struct WORD), _comp); // descending order
+    //printf("After qsort: \n");
+    //for(int cnt=0; cnt<10; cnt++){
+    //    printf("%d %s\n", vocab[cnt].count, vocab[cnt].word);
+    //}
+    //printf("\n");
 
     // 2. Discard too less frequently appeared words
     // 3. Allocate space for codes
@@ -488,7 +464,7 @@ void buildBinaryTree(){
 
         total_words += vocab[i].count;
     }
-    
+    //free(&vocab[n_of_words]);
     printf("n_of_words after excluding rare words %d\n", n_of_words);
     printf("total words after excluding rare words %lld\n", total_words);
 
