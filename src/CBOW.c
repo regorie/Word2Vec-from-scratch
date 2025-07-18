@@ -41,6 +41,7 @@ float lr;
 
 float sample = 1e-5;
 long long *skip_cnt;
+long long total_skip_cnt = 0;
 
 // model var
 int hidden_size;
@@ -49,17 +50,17 @@ float* in_layer;
 ///////////////////////////////
 
 void* training_thread(void* id_ptr){
-    int id = (int)(long)id_ptr;
+    long long id = (long long)id_ptr;
 
     FILE* infp = fopen(input_file, "r");
-    int* sentence = (int*)malloc(sizeof(int)*MAX_SENTENCE_LENGTH);
-    int context_count;
-    int target, target_pos;
-    int context, context_pos;
-    int sentence_length;
+    long long* sentence = (long long*)malloc(sizeof(long long)*MAX_SENTENCE_LENGTH);
+    long long context_count;
+    long long target, target_pos;
+    long long context, context_pos;
+    long long sentence_length;
 
-    int random_window;
-    unsigned long long next_random = id;
+    long long random_window;
+    unsigned long long next_random = (long long)id;
 
     long long local_trained_word = 0; 
     long long local_last_trained_word = 0;
@@ -76,11 +77,16 @@ void* training_thread(void* id_ptr){
         fseek(infp, file_size / (long long)n_of_thread * (long long)id, SEEK_SET);
         local_trained_word = 0;
         local_last_trained_word = 0;
-        if(id==1) printf("\nRunning epoch %d\n", ep);
-        while((sentence_length = readSentenceFromFile(infp, sentence, id)) >= 2){
+        if(id==0) printf("\nRunning epoch %d\n", ep);
+        while(1){
 
+            sentence_length = readSentenceFromFile(infp, sentence, id);
             local_trained_word += skip_cnt[id];
             local_skipped_total += skip_cnt[id];
+            if(sentence_length <= 0){
+                break;
+            }
+
             for(target_pos=0; target_pos<sentence_length; target_pos++){
                 // traverse the sentence -> target
                 // 0. Calculate current learning rate
@@ -90,7 +96,7 @@ void* training_thread(void* id_ptr){
                     local_last_trained_word = local_trained_word;
                     lr = starting_lr*(1-trained_word/(float)(epoch*total_words+1));
                     if(lr < starting_lr*0.0001) lr = starting_lr*0.0001;
-                    if(id==1){
+                    if(id==0){
                         printf("\rLearning rate: %f, Progress: %.4f, current skipped words: %lld, time: %ld", lr, (float)(local_trained_word)/(float)(total_words/n_of_thread), local_skipped_total, time(NULL)-start);
                         fflush(stdout);
                     }
@@ -109,7 +115,7 @@ void* training_thread(void* id_ptr){
                 }
                 next_random = next_random * (unsigned long long)25214903917 + 11;
                 random_window = next_random % window_size;
-                for(context_pos=target_pos-random_window; context_pos<target_pos+random_window; context_pos++){
+                for(context_pos=target_pos-random_window; context_pos<=target_pos+random_window; context_pos++){
                     if(context_pos < 0) continue;
                     if(context_pos >= sentence_length) break;
 
@@ -156,7 +162,7 @@ void* training_thread(void* id_ptr){
                 }
 
                 // 4. update in_layer
-                for(context_pos=target_pos-random_window; context_pos<target_pos+random_window; context_pos++){
+                for(context_pos=target_pos-random_window; context_pos<=target_pos+random_window; context_pos++){
                     if(context_pos < 0) continue;
                     if(context_pos >= sentence_length) break;
 
@@ -173,6 +179,12 @@ void* training_thread(void* id_ptr){
 
             if(local_trained_word > word_per_thread){
                 trained_word += local_trained_word - local_last_trained_word;
+                lr = starting_lr*(1-trained_word/(float)(epoch*total_words+1));
+                if(lr < starting_lr*0.0001) lr = starting_lr*0.0001;
+                if(id==0){
+                    printf("\rLearning rate: %f, Progress: %.4f, current skipped words: %lld, time: %ld", lr, (float)(local_trained_word)/(float)(total_words/n_of_thread), local_skipped_total, time(NULL)-start);
+                    fflush(stdout);
+                }
                 break;
             }
         }
@@ -187,20 +199,22 @@ void* training_thread(void* id_ptr){
 }
 
 int main(int argc, char** argv){
-    if(argc < 7){
-        printf("Usage example: ./cbow hidden_size window_size thread_number epoch data_file output_file\n");
+    if(argc < 8){
+        printf("Usage example: ./cbow hidden_size window_size sampling_param thread_number epoch data_file output_file\n");
         return -1;
     }
     else{
         hidden_size = atoi(argv[1]);
         window_size = atoi(argv[2]);
-        n_of_thread = atoi(argv[3]);
-        epoch = atoi(argv[4]);
-        strcpy(input_file, argv[5]);
-        strcpy(output_file, argv[6]);
+        sample = atof(argv[3]);
+        n_of_thread = atoi(argv[4]);
+        epoch = atoi(argv[5]);
+        strcpy(input_file, argv[6]);
+        strcpy(output_file, argv[7]);
     }
     starting_lr = 0.05;
     printf("Starting learning rate : %f\n", starting_lr);
+    printf("Sampling param: %f\n", sample);
 
     // prepare for training
     hash = (int*)calloc(size_of_hash, sizeof(int));
@@ -243,7 +257,7 @@ int main(int argc, char** argv){
     pthread_t* threads = (pthread_t*)malloc(sizeof(pthread_t)*n_of_thread);
     srand(time(NULL));
     int* id = (int*)malloc(sizeof(int)*n_of_thread);
-    skip_cnt = (long long*)malloc(sizeof(int)*n_of_thread);
+    skip_cnt = (long long*)malloc(sizeof(long long)*n_of_thread);
     for(int a=0; a<n_of_thread; a++){
         id[a] = a;
         pthread_create(&threads[a], NULL, training_thread, (void*)(long)a);
@@ -253,7 +267,7 @@ int main(int argc, char** argv){
         pthread_join(threads[a], NULL);
     }
     time_t end_time = time(NULL);
-    printf("\nTraining done... took %ld, last learning rate: %f trained_words: %ld\n", end_time-start_time, lr, trained_word);
+    printf("\nTraining done... took %ld, last learning rate: %f trained_words: %lld skipped_words: %lld\n", end_time-start_time, lr, trained_word, total_skip_cnt);
 
     // save word vectors
     FILE* outfp = fopen(output_file, "wb");
@@ -368,16 +382,17 @@ void initModel(){
  // initialize model
 }
 
-int readSentenceFromFile(FILE* fp, int* sentence, int thread_id){
+int readSentenceFromFile(FILE* fp, int* sentence, long long thread_id){
     char ch;
     char cur_word[MAX_STRING] = {0};
     int word_length = 0;
     int sentence_length = 0;
     int id_found;
-    unsigned long long next_random = (long long)thread_id;
+    unsigned long long next_random = thread_id;
     //unsigned long long next_random = 5;
     skip_cnt[thread_id] = 0;
-    while((ch = fgetc(fp)) != EOF){
+    while(!feof(fp)){
+        ch = fgetc(fp);
         if(ch==' ' || ch=='\t' || ch=='\n'){
             
             if(word_length==0) continue;
@@ -391,6 +406,7 @@ int readSentenceFromFile(FILE* fp, int* sentence, int thread_id){
                     next_random = next_random * (unsigned long long)25214903917 + 11;
                     if(ran < (next_random & 0xFFFF) / (float)65536) {
                         skip_cnt[thread_id]++;
+                        total_skip_cnt++;
                         continue;
                     }
                 }
@@ -406,6 +422,26 @@ int readSentenceFromFile(FILE* fp, int* sentence, int thread_id){
         else{
             if(word_length >= MAX_STRING - 1) word_length--;
             cur_word[word_length++] = ch;
+        }
+    }
+
+    if(word_length > 0){
+        // add the last word
+        cur_word[word_length] = 0;
+        word_length = 0;
+
+        id_found = searchVocabID(cur_word);
+        if(id_found != -1){
+            if (sample > 0){
+                float ran = (sqrt(vocab[id_found].count / (sample * total_words)) + 1) * (sample * total_words) / vocab[id_found].count;
+                next_random = next_random * (unsigned long long)25214903917 + 11;
+                if(ran < (next_random & 0xFFFF) / (float)65536) {
+                    skip_cnt[thread_id]++;
+                    total_skip_cnt++;
+                    return sentence_length;
+                }
+            }
+            sentence[sentence_length++] = id_found;
         }
     }
     return sentence_length;

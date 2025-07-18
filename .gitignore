@@ -1,2 +1,3 @@
 data/text8
-vscode/*
+.vscode/*
+*.exe
