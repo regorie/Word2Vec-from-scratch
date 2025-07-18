@@ -20,7 +20,7 @@ int getWordHash(char* word);
 void buildHash(char* file_name);
 void resetHashTable();
 
-int readSentenceFromFile(FILE* fp, int* sentence, long long id);
+int readSentenceFromFile(FILE* fp, long long* sentence, long long id, int iter);
 int searchVocabID(char* word);
 char* IDtoWord(int id);
 

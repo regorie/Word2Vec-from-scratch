@@ -80,7 +80,7 @@ void* training_thread(void* id_ptr){
         if(id==0) printf("\nRunning epoch %d\n", ep);
         while(1){
 
-            sentence_length = readSentenceFromFile(infp, sentence, id);
+            sentence_length = readSentenceFromFile(infp, sentence, id, ep+1);
             local_trained_word += skip_cnt[id];
             local_skipped_total += skip_cnt[id];
             if(sentence_length <= 0){
@@ -382,14 +382,15 @@ void initModel(){
  // initialize model
 }
 
-int readSentenceFromFile(FILE* fp, int* sentence, long long thread_id){
+int readSentenceFromFile(FILE* fp, long long* sentence, long long thread_id, int iter){
     char ch;
     char cur_word[MAX_STRING] = {0};
     int word_length = 0;
     int sentence_length = 0;
     int id_found;
     unsigned long long next_random = thread_id;
-    //unsigned long long next_random = 5;
+    next_random += (unsigned long long)iter*17;
+
     skip_cnt[thread_id] = 0;
     while(!feof(fp)){
         ch = fgetc(fp);
