@@ -7,7 +7,7 @@
 
 #include <ctype.h>
 
-#include "word2vec.h"
+#include "word2vec_NS.h"
 
 #define EXP_TABLE_SIZE 1000
 #define MAX_EXP 6
@@ -33,17 +33,24 @@ int min_count = 5;
 int epoch;
 
 float* expTable;
-int n_of_inner_node = 0;
+
+// negative sampling
+int ns_sample=5;
+int* unigram_table;
+int unigram_table_size=1e8;
+
 float starting_lr;
 float lr;
 
+// sub-sampling
 float sample = 1e-5;
 long long *skip_cnt;
 long long total_skip_cnt = 0;
 
 // model var
 int hidden_size;
-float* in_layer; // parameter
+float* in_layer;
+float* out_layer;
 
 void* training_thread(void* id_ptr){
     long long id = (long long)id_ptr;
@@ -89,6 +96,7 @@ void* training_thread(void* id_ptr){
 
                 if(local_trained_word - local_last_trained_word > 10000){
                     trained_word += local_trained_word - local_last_trained_word;
+                    local_last_trained_word = local_trained_word;
                     lr = starting_lr*(1-(float)trained_word / (float)(epoch*total_words+1));
                     if(lr<starting_lr*0.0001) lr = starting_lr*0.0001;
                     if(id==0){
@@ -111,30 +119,37 @@ void* training_thread(void* id_ptr){
                     
                     if(context_pos != target_pos){
                         float g, f;
+                        int current_sample, label;
 
                         context = sentence[context_pos];
                         if(context==-1) continue;
-                        for(int d=0; d<vocab[context].codelen; d++){
-                            int current_path = vocab[context].point[d];
 
-                            // dot product
-                            f=0;
+                        for(int d=0; d<ns_sample+1; d++){
+                            // pick sample
+                            if(d==0){
+                                current_sample = context;
+                                label=1;
+                            }
+                            else{
+                                next_random = next_random*(unsigned long long)25214903917 + 11;
+                                current_sample = unigram_table[(next_random >> 16) % unigram_table_size];
+                                if(current_sample==context){
+                                    continue;
+                                }
+                                label=0;
+                            }
+
+                            f = 0.0;
                             for(int c=0; c<hidden_size; c++){
-                                f += in_layer[target*hidden_size + c] * nodes[current_path*hidden_size + c];
+                                f += in_layer[target*hidden_size + c] * out_layer[current_sample*hidden_size + c];
                             }
                             // sigmoid
-                            if(f <= -MAX_EXP || f>=MAX_EXP) continue;
-                            else f = expTable[(int)((f+MAX_EXP)*(EXP_TABLE_SIZE/MAX_EXP/2))];
-
-                            // 3. backward pass
-                            g = (1 - vocab[context].code[d] - f);
-                            g *= lr;
-
-                            for(int c=0; c<hidden_size; c++){
-                                // calculating gradient for in_layer and updating inner node
-                                layer_grad[c] += g*nodes[current_path*hidden_size + c];
-                                nodes[current_path*hidden_size + c] += g * in_layer[target*hidden_size + c];
-                            }
+                            if (f > MAX_EXP) g = (label-1)*lr;
+                            else if (f < -MAX_EXP) g = (label-0)*lr;
+                            else g = (label - expTable[(int)((f + MAX_EXP)*(EXP_TABLE_SIZE/MAX_EXP/2))]) * lr;
+                        
+                            for(int c=0; c<hidden_size; c++) layer_grad[c] += g*out_layer[current_sample*hidden_size + c];
+                            for(int c=0; c<hidden_size; c++) out_layer[current_sample*hidden_size + c] += g*in_layer[target*hidden_size + c];
                         }
                     }
                 }
@@ -166,29 +181,33 @@ void* training_thread(void* id_ptr){
 }
 
 int main(int argc, char** argv){
-    if(argc < 8){
-        printf("Usage example: ./skipgram hidden_size window_size sampling_param thread_number epoch data_file output_file\n");
+    if(argc < 9){
+        printf("Usage example: ./cbow hidden_size window_size ns_sample sampling_param thread_number epoch data_file output_file\n");
         return -1;
     }
     else{
         hidden_size = atoi(argv[1]);
         window_size = atoi(argv[2]);
-        sample = atof(argv[3]);
-        n_of_thread = atoi(argv[4]);
-        epoch = atoi(argv[5]);
-        strcpy(input_file, argv[6]);
-        strcpy(output_file, argv[7]);
+        ns_sample = atof(argv[3]);
+        sample = atof(argv[4]);
+        n_of_thread = atoi(argv[5]);
+        epoch = atoi(argv[6]);
+        strcpy(input_file, argv[7]);
+        strcpy(output_file, argv[8]);
     }
     starting_lr = 0.025;
     printf("Starting learning rate : %f\n", starting_lr);
     printf("Sampling param: %f\n", sample);
+    printf("Negative sampling number: %d\n", ns_sample);
 
     // prepare for training
     hash = (int*)calloc(size_of_hash, sizeof(int));
     vocab = (struct WORD*)calloc(size_of_vocab, sizeof(struct WORD));
 
     buildHash(input_file);
-    buildBinaryTree();
+    reduceHash();
+
+    initUnigramTable();
 
     expTable = (float*)malloc((EXP_TABLE_SIZE + 1)*sizeof(float));
     for(int i=0; i<EXP_TABLE_SIZE; i++){
@@ -198,25 +217,18 @@ int main(int argc, char** argv){
 
     // initialize model
     in_layer = (float*)malloc(sizeof(float)*hidden_size*n_of_words);
+    out_layer = (float*)malloc(sizeof(float)*hidden_size*n_of_words);
     int random_number = 1;
+    int random_number2 = 5;
     for(int a=0; a<n_of_words; a++){
         for(int b=0; b<hidden_size; b++){
             random_number = random_number * (unsigned long long)25214903917 + 11;
+            random_number2 = random_number2 * (unsigned long long)25214903917 + 11;
             in_layer[a*hidden_size + b] = (((random_number & 0xFFFF) / (float)65536) - 0.5) / hidden_size;
+            out_layer[a*hidden_size + b] = (((random_number2 & 0xFFFF) / (float)65536) - 0.5) / hidden_size;
+            //out_layer[a*hidden_size + b] = 0.0;
         }
     } 
-
-    // initialize inner nodes of binary tree
-    printf("n_of_inner_node: %d\n",n_of_inner_node);
-    
-    nodes = (float*)malloc(sizeof(float)*hidden_size*n_of_inner_node);
-    for(int a=0; a<n_of_inner_node; a++){
-        for(int b=0; b<hidden_size; b++){
-            random_number = random_number * (unsigned long long)25214903917 + 11;
-            //nodes[a*hidden_size + b] = (((random_number & 0xFFFF) / (float)65536) - 0.5) / hidden_size;
-            nodes[a*hidden_size + b] = 0.0;
-        }
-    }
 
     // train
     printf("Training...");
@@ -264,6 +276,11 @@ int main(int argc, char** argv){
     free(id);
     free(hash);
     free(vocab);
+    free(skip_cnt);
+    free(threads);
+
+    free(in_layer);
+    free(out_layer);
     return 0;
 }
 
@@ -342,6 +359,42 @@ void buildHash(char* file_name){
     fclose(infp);
     printf("done... n_of_words = %d total_words = %lld\n", n_of_words, total_words);
     return;
+}
+
+int _comp(const void* a, const void* b){
+    return ((struct WORD*)b)->count - ((struct WORD*)a)->count;
+}
+
+void reduceHash(){
+    printf("Reducing hash table...\n");
+    // 1. Sort vocab by count
+    qsort(vocab, n_of_words, sizeof(struct WORD), _comp); // descending order
+
+    // 2. Discard too less frequently appeared words
+    // 3. Allocate space for codes
+    // 4. recompute hash
+    resetHashTable();
+    total_words = 0;
+    int hash_key;
+    for(int i=0; i<n_of_words; i++){
+        if (vocab[i].count < min_count) {
+            n_of_words = i;
+            break;
+        }
+        vocab[i].code = (char*)calloc(MAX_CODE_LENGTH, sizeof(char));
+        vocab[i].point = (int*)calloc(MAX_CODE_LENGTH, sizeof(int));
+
+        hash_key = getWordHash(vocab[i].word);
+        while(hash[hash_key]!=-1){
+            hash_key = (hash_key + 1) % MAX_VOCAB_SIZE;
+        }
+        hash[hash_key] = i;
+
+        total_words += vocab[i].count;
+    }
+    
+    printf("n_of_words after excluding rare words %d\n", n_of_words);
+    printf("total words after excluding rare words %lld\n", total_words);
 }
 
 void initModel(){
@@ -423,138 +476,24 @@ int searchVocabID(char* word){
     }
 }
 
-int _comp(const void* a, const void* b){
-    return ((struct WORD*)b)->count - ((struct WORD*)a)->count;
-}
-
-void buildBinaryTree(){
-    printf("building binary tree...\n");
-    // 1. Sort vocab by count
-    //printf("Before qsort: \n");
-    //for(int cnt=0; cnt<10; cnt++){
-    //    printf("%d %s\n", vocab[cnt].count, vocab[cnt].word);
-    //}
-    //printf("\n");
-    qsort(vocab, n_of_words, sizeof(struct WORD), _comp); // descending order
-    //printf("After qsort: \n");
-    //for(int cnt=0; cnt<10; cnt++){
-    //    printf("%d %s\n", vocab[cnt].count, vocab[cnt].word);
-    //}
-    //printf("\n");
-
-    // 2. Discard too less frequently appeared words
-    // 3. Allocate space for codes
-    // 4. recompute hash
-    resetHashTable();
-    total_words = 0;
-    int hash_key;
-    for(int i=0; i<n_of_words; i++){
-        if (vocab[i].count < min_count) {
-            n_of_words = i;
-            break;
-        }
-        vocab[i].code = (char*)calloc(MAX_CODE_LENGTH, sizeof(char));
-        vocab[i].point = (int*)calloc(MAX_CODE_LENGTH, sizeof(int));
-
-        hash_key = getWordHash(vocab[i].word);
-        while(hash[hash_key]!=-1){
-            hash_key = (hash_key + 1) % MAX_VOCAB_SIZE;
-        }
-        hash[hash_key] = i;
-
-        total_words += vocab[i].count;
+void initUnigramTable(){
+    int a, i;
+    double train_words_pow = 0;
+    double d1, power = 0.75;
+    unigram_table = (int*)malloc(unigram_table_size * sizeof(int));
+    for (a = 0; a < n_of_words; a++) {
+        train_words_pow += pow(vocab[a].count, power);
     }
-    //free(&vocab[n_of_words]);
-    printf("n_of_words after excluding rare words %d\n", n_of_words);
-    printf("total words after excluding rare words %lld\n", total_words);
-
-    // 5. build binary tree
-    int pos1, pos2, min1i, min2i;
-    int* count = (int*)calloc(n_of_words*2 + 1, sizeof(int));
-    int* binary = (int*)calloc(n_of_words*2 + 1, sizeof(int));
-    int* parent_node = (int*)calloc(n_of_words*2 + 1, sizeof(int));
-
-    for(int i=0; i<n_of_words; i++){
-        count[i] = vocab[i].count;
-    }
-    for(int i=n_of_words; i<n_of_words*2; i++){
-        count[i] = INT_MAX;
-    }
-
-    pos1 = n_of_words-1;
-    pos2 = n_of_words;
-    for(int i=0; i<n_of_words; i++){
-        if(pos1 >= 0){ // find min1i
-            if(count[pos1] < count[pos2]){
-                min1i = pos1;
-                pos1--;
-            }
-            else{
-                min1i = pos2;
-                pos2++;
-            }
-        }
-        else{
-            min1i = pos2;
-            pos2++;
-        }
-        if(pos1 >= 0){ // find min2i
-            if(count[pos1] < count[pos2]){
-                min2i = pos1;
-                pos1--;
-            }
-            else{
-                min2i = pos2;
-                pos2++;
-            }
-        }
-        else{
-            min2i = pos2;
-            pos2++;
-        }
-        count[n_of_words+i] = count[min1i] + count[min2i];
-        parent_node[min1i] = n_of_words+i;
-        parent_node[min2i] = n_of_words+i;
-        binary[min2i] = 1; // 1 for right node
-    }
-    // assign binary codes to each word
-    printf("assigning codes...\n");
-    int b, i;
-    char* code = (char*)calloc(MAX_CODE_LENGTH, sizeof(char));
-    int* point = (int*)calloc(MAX_CODE_LENGTH, sizeof(int));
-
-    for(int a=0; a<n_of_words; a++){
-        b = a;
-        i = 0;
-        while(1){ // find code of a by traversing from 'a' to root (by 'b')
-            code[i] = binary[b];
-            point[i] = b; // point = parent node
+    i=0;
+    d1 = pow(vocab[a].count, power) / train_words_pow;
+    for(a=0; a<unigram_table_size; a++){
+        unigram_table[a] = i;
+        if(a / (double)unigram_table_size > d1){
             i++;
-            b = parent_node[b]; // follow parent node -> leads to root
-            if(b==n_of_words*2-2){
-                break;
-            }
+            d1 += pow(vocab[i].count, power) / train_words_pow;                
         }
-
-        vocab[a].codelen = i;
-        vocab[a].point[0] = n_of_words - 2;
-
-        for( b=0; b<i; b++){
-            vocab[a].code[i-b-1] = code[b]; // code is written backwards, so flip it!
-            vocab[a].point[i-b] = point[b] - n_of_words; // storing parent nodes -> the path from root to a
-            if(n_of_inner_node < point[b] - n_of_words) n_of_inner_node = point[b] - n_of_words;
-        }
-
+        if(i >= n_of_words) i = n_of_words - 1;
     }
-
-    n_of_inner_node += 2;
-    free(count);
-    free(binary);
-    free(parent_node);
-    free(code);
-    free(point);
-    printf("done...\n");
-    return;
 }
 
 char* IDtoWord(int id){

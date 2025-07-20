@@ -89,6 +89,7 @@ void* training_thread(void* id_ptr){
 
                 if(local_trained_word - local_last_trained_word > 10000){
                     trained_word += local_trained_word - local_last_trained_word;
+                    local_last_trained_word = local_trained_word;
                     lr = starting_lr*(1-(float)trained_word / (float)(epoch*total_words+1));
                     if(lr<starting_lr*0.0001) lr = starting_lr*0.0001;
                     if(id==0){
@@ -264,6 +265,7 @@ int main(int argc, char** argv){
     free(id);
     free(hash);
     free(vocab);
+    free(in_layer);
     return 0;
 }
 

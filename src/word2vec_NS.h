@@ -18,6 +18,7 @@ struct WORD { // idx is id(hash table)
 
 int getWordHash(char* word);
 void buildHash(char* file_name);
+void reduceHash();
 void resetHashTable();
 void initUnigramTable();
 

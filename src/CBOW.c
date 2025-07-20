@@ -292,12 +292,13 @@ int main(int argc, char** argv){
     }
     fclose(outfp);
     // free everything
-
     free(id);
     free(hash);
     free(vocab);
     free(skip_cnt);
     free(threads);
+
+    free(in_layer);
     return 0;
 }
 
