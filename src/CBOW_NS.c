@@ -34,13 +34,16 @@ int min_count = 5;
 int epoch;
 
 float* expTable;
-//int n_of_inner_node = 0;
+
+// negative sampling
+int ns_sample=5;
 int* unigram_table;
 int unigram_table_size=1e8;
 
 float starting_lr;
 float lr;
 
+// sub-sampling
 float sample = 1e-5;
 long long *skip_cnt;
 long long total_skip_cnt = 0;
@@ -48,6 +51,7 @@ long long total_skip_cnt = 0;
 // model var
 int hidden_size;
 float* in_layer;
+float* out_layer;
 
 ///////////////////////////////
 
@@ -137,30 +141,32 @@ void* training_thread(void* id_ptr){
                 }
 
                 // forward pass out_layer
-                // hierarchical softmax
+                // negative sampling
                 float g;
-                for(int d=0; d<vocab[target].codelen; d++){
-                    int current_path = vocab[target].point[d];
-
-                    // dot product
-                    float f = 0;
-                    for(int b=0; b<hidden_size; b++){
-                        f += hidden_values[b] * nodes[current_path*hidden_size + b];
+                int current_sample;
+                for(int d=0; d<ns_sample+1; d++){
+                    if(d==0){ // target word first
+                        current_sample = target;
+                        label=1;
                     }
-                    //sigmoid
-                    if(f<=-MAX_EXP || f>=MAX_EXP) continue;
-                    else f = expTable[(int)((f+MAX_EXP)*(EXP_TABLE_SIZE/MAX_EXP/2))];
-
-                    // 3. backward pass
-                    g = (1 - vocab[target].code[d] - f);
-                    g *= lr;
-
-                    for(int b=0; b<hidden_size; b++){
-                        // calculate gradient
-                        layer_grad[b] += g * nodes[current_path*hidden_size + b];
-                        // update inner node
-                        nodes[current_path*hidden_size + b] += g*hidden_values[b];
+                    else{
+                        next_random = next_random*(unsigned long long)25214903917 + 11;
+                        current_sample = unigram_table[(next_random >> 16) % unigram_table_size];
+                        if(current_sample==target) current_sample = next_random %(n_of_words - 1) + 1;
+                        label=0;
                     }
+
+                    float f=0;
+                    for(int c=0; c<hidden_size; c++){
+                        f += hidden_values[c] * out_layer[current_sample*hidden_size + c];
+                    }
+                    // sigmoid
+                    if (f > MAX_EXP) g = (label-1)*lr;
+                    else if (f < -MAX_EXP) g = (label)*lr;
+                    else g = (label - expTable[(int)((f + MAX_EXP)*(EXP_TABLE_SIZE/MAX_EXP/2))]) * lr;
+                    // calculate gradient
+                    for (int c=0; c<hidden_size; c++) layer_grad[c] += g*out_layer[current_sample*hidden_size + c];
+                    for (int c=0; c<hidden_size; c++) out_layer[current_sample*hidden_size + c] += g * hidden_values[c];
                 }
 
                 // 4. update in_layer
@@ -202,21 +208,23 @@ void* training_thread(void* id_ptr){
 
 int main(int argc, char** argv){
     if(argc < 8){
-        printf("Usage example: ./cbow hidden_size window_size sampling_param thread_number epoch data_file output_file\n");
+        printf("Usage example: ./cbow hidden_size window_size ns_sample sampling_param thread_number epoch data_file output_file\n");
         return -1;
     }
     else{
         hidden_size = atoi(argv[1]);
         window_size = atoi(argv[2]);
-        sample = atof(argv[3]);
-        n_of_thread = atoi(argv[4]);
-        epoch = atoi(argv[5]);
-        strcpy(input_file, argv[6]);
-        strcpy(output_file, argv[7]);
+        ns_sample = atof(argv[3]);
+        sample = atof(argv[4]);
+        n_of_thread = atoi(argv[5]);
+        epoch = atoi(argv[6]);
+        strcpy(input_file, argv[7]);
+        strcpy(output_file, argv[8]);
     }
     starting_lr = 0.05;
     printf("Starting learning rate : %f\n", starting_lr);
     printf("Sampling param: %f\n", sample);
+    printf("Negative sampling number: %d\n", ns_sample)
 
     // prepare for training
     hash = (int*)calloc(size_of_hash, sizeof(int));
@@ -233,11 +241,15 @@ int main(int argc, char** argv){
 
     // initialize model
     in_layer = (float*)malloc(sizeof(float)*hidden_size*n_of_words);
+    out_layer = (float*)malloc(sizeof(float)*hidden_size*n_of_words);
     int random_number = 1;
+    int random_number2 = 5;
     for(int a=0; a<n_of_words; a++){
         for(int b=0; b<hidden_size; b++){
             random_number = random_number * (unsigned long long)25214903917 + 11;
+            random_number2 = random_number2 * (unsigned long long)25214903917 + 11;
             in_layer[a*hidden_size + b] = (((random_number & 0xFFFF) / (float)65536) - 0.5) / hidden_size;
+            out_layer[a*hidden_size + b] = (((random_number2 & 0xFFFF) / (float)65536) - 0.5) / hidden_size;
         }
     } 
 
@@ -465,7 +477,23 @@ int _comp(const void* a, const void* b){
 }
 
 void initUnigramTable(){
-
+    int a, i;
+    double train_words_pow = 0;
+    double d1, power = 0.75;
+    unigram_table = (int*)malloc(unigram_table_size * sizeof(int));
+    for (a = 0; a < n_of_words; a++) {
+        train_words_pow += pow(vocab[a].count, power);
+        i=0;
+        d1 = pow(vocab[a].count, power) / train_words_pow;
+        for(a=0; a<unigram_table_size; a++){
+            unigram_table[a] = i;
+            if(a / (double)unigram_table_size > d1){
+                i++;
+                d1 += pow(vocab[i].count, power) / train_words_pow;                
+            }
+            if(i >= n_of_words) i = n_of_words - 1;
+        }
+    }
 }
 
 char* IDtoWord(int id){
