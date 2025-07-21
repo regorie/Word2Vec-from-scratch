@@ -26,6 +26,7 @@ int size_of_hash = MAX_VOCAB_SIZE;
 struct WORD* vocab;
 int size_of_vocab = 2048;
 int n_of_words = 0;
+int n_of_words_limit;
 long long total_words = 0;
 long long trained_word = 0;
 int window_size = 5;
@@ -181,19 +182,20 @@ void* training_thread(void* id_ptr){
 }
 
 int main(int argc, char** argv){
-    if(argc < 9){
-        printf("Usage example: ./cbow hidden_size window_size ns_sample sampling_param thread_number epoch data_file output_file\n");
+    if(argc < 10){
+        printf("Usage example: ./skipgramns hidden_size window_size n_of_words_limit ns_sample sampling_param thread_number epoch data_file output_file\n");
         return -1;
     }
     else{
         hidden_size = atoi(argv[1]);
         window_size = atoi(argv[2]);
-        ns_sample = atof(argv[3]);
-        sample = atof(argv[4]);
-        n_of_thread = atoi(argv[5]);
-        epoch = atoi(argv[6]);
-        strcpy(input_file, argv[7]);
-        strcpy(output_file, argv[8]);
+        n_of_words_limit = atoi(argv[3]);
+        ns_sample = atof(argv[4]);
+        sample = atof(argv[5]);
+        n_of_thread = atoi(argv[6]);
+        epoch = atoi(argv[7]);
+        strcpy(input_file, argv[8]);
+        strcpy(output_file, argv[9]);
     }
     starting_lr = 0.025;
     printf("Starting learning rate : %f\n", starting_lr);
@@ -377,7 +379,7 @@ void reduceHash(){
     total_words = 0;
     int hash_key;
     for(int i=0; i<n_of_words; i++){
-        if (vocab[i].count < min_count) {
+        if (vocab[i].count < min_count || i >= n_of_words_limit) {
             n_of_words = i;
             break;
         }

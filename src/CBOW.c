@@ -27,6 +27,7 @@ int size_of_hash = MAX_VOCAB_SIZE;
 struct WORD* vocab;
 int size_of_vocab = 2048;
 int n_of_words = 0;
+int n_of_words_limit;
 long long total_words = 0;
 long long trained_word = 0;
 int window_size = 5;
@@ -198,18 +199,19 @@ void* training_thread(void* id_ptr){
 }
 
 int main(int argc, char** argv){
-    if(argc < 8){
-        printf("Usage example: ./cbow hidden_size window_size sampling_param thread_number epoch data_file output_file\n");
+    if(argc < 9){
+        printf("Usage example: ./cbow hidden_size window_size n_of_words_limit sampling_param thread_number epoch data_file output_file\n");
         return -1;
     }
     else{
         hidden_size = atoi(argv[1]);
         window_size = atoi(argv[2]);
-        sample = atof(argv[3]);
-        n_of_thread = atoi(argv[4]);
-        epoch = atoi(argv[5]);
-        strcpy(input_file, argv[6]);
-        strcpy(output_file, argv[7]);
+        n_of_words_limit = atoi(argv[3]);
+        sample = atof(argv[4]);
+        n_of_thread = atoi(argv[5]);
+        epoch = atoi(argv[6]);
+        strcpy(input_file, argv[7]);
+        strcpy(output_file, argv[8]);
     }
     starting_lr = 0.05;
     printf("Starting learning rate : %f\n", starting_lr);
@@ -474,7 +476,7 @@ void buildBinaryTree(){
     total_words = 0;
     int hash_key;
     for(int i=0; i<n_of_words; i++){
-        if (vocab[i].count < min_count) {
+        if (vocab[i].count < min_count || i >= n_of_words_limit) {
             n_of_words = i;
             break;
         }
