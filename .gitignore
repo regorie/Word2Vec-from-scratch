@@ -1,3 +1,6 @@
 data/text8
 .vscode/*
 *.exe
+./saved_bin/*
+!compute-accuracy.exe
+!./saved_bin/place_holder
