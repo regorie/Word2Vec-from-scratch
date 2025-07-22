@@ -88,6 +88,7 @@ void* training_thread(void* id_ptr){
         while(1){
             //if(id==0) printf("training...\n");
             sentence_length = readSentenceFromFile(infp, sentence, id, ep+1);
+            if(sentence_length < 0) break;
             local_trained_word += skip_cnt[id];
             local_skipped_total += skip_cnt[id];
 
@@ -503,6 +504,7 @@ int readSentenceFromFile(FILE* fp, long long* sentence, long long thread_id, int
             sentence[sentence_length++] = id_found;
         }
     }
+    if(sentence_length==0) return -1;
     return sentence_length;
 }
 
