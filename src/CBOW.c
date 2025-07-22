@@ -83,9 +83,6 @@ void* training_thread(void* id_ptr){
             sentence_length = readSentenceFromFile(infp, sentence, id, ep+1);
             local_trained_word += skip_cnt[id];
             local_skipped_total += skip_cnt[id];
-            if(sentence_length <= 0){
-                break;
-            }
 
             for(target_pos=0; target_pos<sentence_length; target_pos++){
                 // traverse the sentence -> target
@@ -195,6 +192,9 @@ void* training_thread(void* id_ptr){
     free(sentence);
     fclose(infp);
 
+    printf("Thread %lld returning\n", id);
+    fflush(stdout);
+
     return NULL;
 }
 
@@ -272,13 +272,14 @@ int main(int argc, char** argv){
 
     // save word vectors
     FILE* outfp = fopen(output_file, "wb");
+    long long nonalphabet_cnt = 0;
     fprintf(outfp, "%lld %lld\n", (long long)n_of_words, (long long)hidden_size);
     for(int a=0; a<n_of_words; a++){
         fprintf(outfp, "%s ", vocab[a].word);
 
         if(binary) {
             for(int k=0;k<strlen(vocab[a].word);k++){
-                if(!isalpha(vocab[a].word[k])){ printf(" not alphabet!\n");}
+                if(!isalpha(vocab[a].word[k])){ nonalphabet_cnt++;}
             }
 
             for(int b=0; b<hidden_size; b++){
@@ -301,6 +302,8 @@ int main(int argc, char** argv){
     free(threads);
 
     free(in_layer);
+    
+    printf("non-aphabet characters: %lld\n", nonalphabet_cnt);
     return 0;
 }
 
