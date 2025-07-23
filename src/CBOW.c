@@ -59,9 +59,6 @@ void* training_thread(void* id_ptr){
     long long context, context_pos;
     long long sentence_length;
 
-    long long random_window;
-    unsigned long long next_random = (long long)id;
-
     long long local_trained_word = 0; 
     long long local_last_trained_word = 0;
     float* layer_grad = (float*)calloc(hidden_size, sizeof(float));
@@ -111,9 +108,8 @@ void* training_thread(void* id_ptr){
                     hidden_values[a] = 0.0;
                     layer_grad[a] = 0.0;
                 }
-                next_random = next_random * (unsigned long long)25214903917 + 11;
-                random_window = next_random % window_size;
-                for(context_pos=target_pos-random_window; context_pos<=target_pos+random_window; context_pos++){
+                
+                for(context_pos=target_pos-window_size; context_pos<=target_pos+window_size; context_pos++){
                     if(context_pos < 0) continue;
                     if(context_pos >= sentence_length) break;
 
@@ -160,7 +156,7 @@ void* training_thread(void* id_ptr){
                 }
 
                 // 4. update in_layer
-                for(context_pos=target_pos-random_window; context_pos<=target_pos+random_window; context_pos++){
+                for(context_pos=target_pos-window_size; context_pos<=target_pos+window_size; context_pos++){
                     if(context_pos < 0) continue;
                     if(context_pos >= sentence_length) break;
 
