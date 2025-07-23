@@ -233,7 +233,7 @@ int main(int argc, char** argv){
 
     // initialize model
     in_layer = (float*)malloc(sizeof(float)*hidden_size*n_of_words);
-    int random_number = 1;
+    int random_number = time(NULL);
     for(int a=0; a<n_of_words; a++){
         for(int b=0; b<hidden_size; b++){
             random_number = random_number * (unsigned long long)25214903917 + 11;
