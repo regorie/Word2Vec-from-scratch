@@ -31,7 +31,7 @@ int n_of_words_limit;
 long long total_words = 0;
 long long trained_word = 0;
 int window_size = 5;
-int min_count = 5;
+int min_count = 0;
 int epoch;
 
 float* expTable;
