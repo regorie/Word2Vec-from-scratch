@@ -2,4 +2,3 @@ data/text8
 .vscode/*
 *.exe
 ./saved_bin/*
-!./saved_bin/place_holder
