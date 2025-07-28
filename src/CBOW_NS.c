@@ -215,8 +215,8 @@ void* training_thread(void* id_ptr){
 }
 
 int main(int argc, char** argv){
-    if(argc < 10){
-        printf("Usage example: ./cbowns hidden_size window_size n_of_words_limit ns_sample sampling_param thread_number epoch data_file output_file\n");
+    if(argc < 11){
+        printf("Usage example: ./cbowns hidden_size window_size n_of_words_limit ns_sample sampling_param min_count thread_number epoch data_file output_file\n");
         return -1;
     }
     else{
@@ -225,10 +225,11 @@ int main(int argc, char** argv){
         n_of_words_limit = atoi(argv[3]);
         ns_sample = atof(argv[4]);
         sample = atof(argv[5]);
-        n_of_thread = atoi(argv[6]);
-        epoch = atoi(argv[7]);
-        strcpy(input_file, argv[8]);
-        strcpy(output_file, argv[9]);
+        min_count = atoi(argv[6]);
+        n_of_thread = atoi(argv[7]);
+        epoch = atoi(argv[8]);
+        strcpy(input_file, argv[9]);
+        strcpy(output_file, argv[10]);
     }
     starting_lr = 0.05;
     printf("Starting learning rate : %f\n", starting_lr);
