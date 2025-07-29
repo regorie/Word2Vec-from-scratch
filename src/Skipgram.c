@@ -105,7 +105,9 @@ void* training_thread(void* id_ptr){
                 for (int b=0; b<hidden_size; b++){
                     layer_grad[b] = 0.0;
                 }
-                for(context_pos=target_pos-window_size; context_pos<=target_pos+window_size; context_pos++){
+                next_random = next_random * (unsigned long long)25214903917 + 11;
+                random_window = next_random % window_size;
+                for(context_pos=target_pos-random_window; context_pos<=target_pos+random_window; context_pos++){
                     if(context_pos<0) continue;
                     if(context_pos>=sentence_length) break;
                     
